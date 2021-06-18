@@ -6738,11 +6738,7 @@ def run_qemu(args: CommandLineArguments) -> None:
 
         cmdline += [
             "-drive",
-            f"if=none,id=hd,file={fname},format={'qcow2' if args.qcow2 else 'raw'}",
-            "-device",
-            "virtio-scsi-pci,id=scsi",
-            "-device",
-            "scsi-hd,drive=hd,bootindex=1",
+            f"if=virtio,id=hd,file={fname},format={'qcow2' if args.qcow2 else 'raw'}",
         ]
 
         cmdline += args.cmdline
