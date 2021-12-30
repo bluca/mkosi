@@ -120,7 +120,7 @@ PathString = Union[Path, str]
 
 MKOSI_COMMANDS_NEED_BUILD = (Verb.shell, Verb.boot, Verb.qemu, Verb.serve)
 MKOSI_COMMANDS_SUDO = (Verb.build, Verb.clean, Verb.shell, Verb.boot, Verb.qemu, Verb.serve)
-MKOSI_COMMANDS_CMDLINE = (Verb.build, Verb.shell, Verb.boot, Verb.qemu, Verb.ssh)
+MKOSI_COMMANDS_CMDLINE = (Verb.build, Verb.shell, Verb.boot, Verb.qemu, Verb.ssh, Verb.pkglist)
 
 DRACUT_SYSTEMD_EXTRAS = [
     "/usr/bin/systemd-repart",
@@ -2703,6 +2703,35 @@ def debootstrap_knows_arg(arg: str) -> bool:
     return bytes("invalid option", "UTF-8") not in run(["debootstrap", arg], stdout=PIPE, check=False).stdout
 
 
+def debootstrap_compose_cmdline(args: MkosiArgs, working_directory: Path, print_only: bool) -> List[str]:
+    repos = set(args.repositories) or {"main"}
+    # Ubuntu needs the 'universe' repo to install 'dracut'
+    if args.distribution == Distribution.ubuntu and args.bootable:
+        repos.add("universe")
+
+    cmdline: List[PathString] = [
+        "debootstrap",
+        "--variant=minbase",
+        f"--components={','.join(repos)}",
+    ]
+
+    if print_only:
+        cmdline += ["--print-debs"]
+
+    if args.architecture is not None:
+        debarch = DEBIAN_ARCHITECTURES.get(args.architecture)
+        cmdline += [f"--arch={debarch}"]
+
+    # Let's use --no-check-valid-until only if debootstrap knows it
+    if debootstrap_knows_arg("--no-check-valid-until"):
+        cmdline += ["--no-check-valid-until"]
+
+    assert args.mirror is not None
+    cmdline += [args.release, working_directory, args.mirror]
+
+    return cmdline
+
+
 def invoke_apt(
     args: MkosiArgs,
     do_run_build_script: bool,
@@ -2720,43 +2749,11 @@ def invoke_apt(
     run_workspace_command(args, root, cmdline, network=True, env=env)
 
 
-def install_debian_or_ubuntu(args: MkosiArgs, root: Path, *, do_run_build_script: bool) -> None:
-    # Either the image builds or it fails and we restart, we don't need safety fsyncs when bootstrapping
-    # Add it before debootstrap, as the second stage already uses dpkg from the chroot
-    dpkg_io_conf = root / "etc/dpkg/dpkg.cfg.d/unsafe_io"
-    os.makedirs(dpkg_io_conf.parent, mode=0o755, exist_ok=True)
-    dpkg_io_conf.write_text("force-unsafe-io\n")
-
-    repos = set(args.repositories) or {"main"}
-    # Ubuntu needs the 'universe' repo to install 'dracut'
-    if args.distribution == Distribution.ubuntu and args.bootable:
-        repos.add("universe")
-
-    # debootstrap fails if a base image is used with an already populated root, so skip it.
-    if args.base_image is None:
-        cmdline: List[PathString] = [
-            "debootstrap",
-            "--variant=minbase",
-            "--merged-usr",
-            f"--components={','.join(repos)}",
-        ]
-
-        if args.architecture is not None:
-            debarch = DEBIAN_ARCHITECTURES.get(args.architecture)
-            cmdline += [f"--arch={debarch}"]
-
-        # Let's use --no-check-valid-until only if debootstrap knows it
-        if debootstrap_knows_arg("--no-check-valid-until"):
-            cmdline += ["--no-check-valid-until"]
-
-        assert args.mirror is not None
-        cmdline += [args.release, root, args.mirror]
-        run(cmdline)
-
-    # Install extra packages via the secondary APT run, because it is smarter and can deal better with any
-    # conflicts. dbus and libpam-systemd are optional dependencies for systemd in debian so we include them
-    # explicitly.
+def deb_build_package_list(args: MkosiArgs, do_run_build_script: bool) -> Set[str]:
     extra_packages: Set[str] = set()
+
+    # dbus and libpam-systemd are optional dependencies for systemd in debian so we include them
+    # explicitly.
     add_packages(args, extra_packages, "systemd", "systemd-sysv", "dbus", "libpam-systemd")
     extra_packages.update(args.packages)
 
@@ -2765,7 +2762,6 @@ def install_debian_or_ubuntu(args: MkosiArgs, root: Path, *, do_run_build_script
 
     if not do_run_build_script and args.bootable:
         add_packages(args, extra_packages, "dracut", "binutils")
-        configure_dracut(args, extra_packages, root)
 
         if args.distribution == Distribution.ubuntu:
             add_packages(args, extra_packages, "linux-generic")
@@ -2780,6 +2776,27 @@ def install_debian_or_ubuntu(args: MkosiArgs, root: Path, *, do_run_build_script
 
     if not do_run_build_script and args.ssh:
         add_packages(args, extra_packages, "openssh-server")
+
+    return extra_packages
+
+
+def install_debian_or_ubuntu(args: MkosiArgs, root: Path, *, do_run_build_script: bool) -> None:
+    # Either the image builds or it fails and we restart, we don't need safety fsyncs when bootstrapping
+    # Add it before debootstrap, as the second stage already uses dpkg from the chroot
+    dpkg_io_conf = root / "etc/dpkg/dpkg.cfg.d/unsafe_io"
+    os.makedirs(dpkg_io_conf.parent, mode=0o755, exist_ok=True)
+    dpkg_io_conf.write_text("force-unsafe-io\n")
+
+    # debootstrap fails if a base image is used with an already populated root, so skip it.
+    if args.base_image is None:
+        run(debootstrap_compose_cmdline(args, root, print_only=False))
+
+    # Install extra packages via the secondary APT run, because it is smarter and can deal better with any
+    # conflicts.
+    extra_packages = deb_build_package_list(args, do_run_build_script)
+
+    if not do_run_build_script and args.bootable:
+        configure_dracut(args, extra_packages, root)
 
     # Debian policy is to start daemons by default. The policy-rc.d script can be used choose which ones to
     # start. Let's install one that denies all daemon startups.
@@ -2868,6 +2885,36 @@ def install_debian(args: MkosiArgs, root: Path, do_run_build_script: bool) -> No
 @complete_step("Installing Ubuntu…")
 def install_ubuntu(args: MkosiArgs, root: Path, do_run_build_script: bool) -> None:
     install_debian_or_ubuntu(args, root, do_run_build_script=do_run_build_script)
+
+
+def package_list_debian_or_ubuntu(args: MkosiArgs) -> Set[str]:
+    workspace = setup_workspace(args)
+
+    # First, get the list of our packages
+    package_list = deb_build_package_list(args, True)
+
+    if args.base_image is not None:
+        return sorted(package_list)
+
+    # Then, get the list of base packages from debootstrap, if not building an extension
+    # debootstrap needs a working directory even if it's just printing the package list
+    with tempfile.TemporaryDirectory(dir=workspace.name, prefix=".debootstrap-") as tmpdir:
+        c = run(debootstrap_compose_cmdline(args, tmpdir, print_only=True), stdout=PIPE, text=True)
+        # debootstrap splits some output over multiple lines and some over the same line
+        # (space separated), so avoid splitlines()
+        package_list.update(c.stdout.split())
+
+    return sorted(package_list)
+
+
+@complete_step("Compiling package list for Debian…")
+def package_list_debian(args: MkosiArgs) -> Set[str]:
+    return package_list_debian_or_ubuntu(args)
+
+
+@complete_step("Compiling package list for Ubuntu…")
+def package_list_ubuntu(args: MkosiArgs) -> Set[str]:
+    return package_list_debian_or_ubuntu(args)
 
 
 def run_pacman(root: Path, pacman_conf: Path, packages: Set[str]) -> None:
@@ -8022,6 +8069,16 @@ def needs_build(args: Union[argparse.Namespace, MkosiArgs]) -> bool:
     return args.verb == Verb.build or (args.verb in MKOSI_COMMANDS_NEED_BUILD and (not args.output.exists() or args.force > 0))
 
 
+def run_package_list(args: MkosiArgs) -> None:
+
+    package_list: Dict[Distribution, Callable[[MkosiArgs], None]] = {
+        Distribution.debian: package_list_debian,
+        Distribution.ubuntu: package_list_ubuntu,
+    }
+
+    print(*package_list[args.distribution](args), sep="\n")
+
+
 def run_verb(raw: argparse.Namespace) -> None:
     args = load_args(raw)
 
@@ -8068,3 +8125,6 @@ def run_verb(raw: argparse.Namespace) -> None:
 
     if args.verb == Verb.serve:
         run_serve(args)
+
+    if args.verb == Verb.pkglist:
+        run_package_list(args)

@@ -14,6 +14,8 @@ mkosi — Build Bespoke OS Images
 
 `mkosi [options…] summary`
 
+`mkosi [options…] package-list`
+
 `mkosi [options…] shell [command line…]`
 
 `mkosi [options…] boot [nspawn settings…]`
@@ -61,6 +63,13 @@ The following command line verbs are known:
   image. This will parse the command line and `mkosi.default` file as it
   would do on `build`, but only output what it is configured for and not
   actually build anything.`
+
+`package-list`
+
+: Outputs a machine-readable (newline separated) list of all packages that
+  would be downloaded and installed for an image build. This will parse
+  the command line and `mkosi.default` file as it would do on `build`, but
+  only output the list to standard output and not actually build anything.`
 
 `shell`
 

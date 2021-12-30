@@ -127,6 +127,7 @@ class Verb(enum.Enum):
     bump    = "bump"
     help    = "help"
     genkey  = "genkey"
+    pkglist = "package-list"
 
     # Defining __str__ is required to get "print_help()" output to include the human readable (values) of Verb.
     def __str__(self) -> str:
