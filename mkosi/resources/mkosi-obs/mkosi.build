@@ -9,6 +9,7 @@
 # - place artifacts from previous builds and signed UKI in output directory
 
 set -e
+set -x
 
 if [ ! -f /usr/src/packages/SOURCES/hashes.cpio.rsasign.sig ]; then
     exit 0
@@ -218,6 +219,82 @@ while read -r SIG; do
     fi
 done < <(find hashes/roothashes -type f -name '*.sig')
 rm -rf hashes/roothashes
+
+rm -rf "$nss_db"
+mkdir -p "$nss_db"
+certutil -N -d sql:"$nss_db" --empty-password
+certutil -A -d sql:"$nss_db" -n cert -t CT,CT,CT -i /usr/src/packages/SOURCES/_projectcert.crt
+
+while read -r SIG; do
+    infile="${SIG%.sig}"
+    test -f "/usr/src/packages/SOURCES/$infile" || continue
+    sattrs="hashes/addons/${SIG%.sig}"
+    test -s "$sattrs"
+
+    DEST="$OUTPUTDIR/${SIG#*/}"
+    DEST="${DEST%%.sig}"
+
+    # ensure the EFI hash matches before and after attaching the signature
+    old_hash=$(pesign -n sql:"$nss_db" -h -P -i "/usr/src/packages/SOURCES/$infile" | cut -d' ' -f1)
+
+    pesign -n sql:"$nss_db" --force -c cert -i "/usr/src/packages/SOURCES/$infile" -o "$DEST" -d sha256 -I "$sattrs" -R "hashes/addons/$SIG"
+
+    new_hash=$(pesign -n sql:"$nss_db" -h -i "$DEST" | cut -d' ' -f1)
+    if [ "$old_hash" != "$new_hash" ]; then
+        echo "Pesign hash mismatch error: $old_hash $new_hash"
+        exit 1
+    fi
+
+    rm -f "$(basename "${infile}").sattrs" "$SIG" "$infile"
+
+    for ddi in "$OUTPUTDIR"/*.raw*; do
+        test -f "$ddi" || continue
+
+        if [[ $ddi == *.zst ]]; then
+            unzstd "${ddi}"
+            recompress=1
+        else
+            recompress=0
+        fi
+
+        offset="$(systemd-repart --json=short "${ddi%.zst}" | jq -r '.[] | select(.type == "esp") | .offset')"
+        if [ -z "$offset" ] || [ "$offset" = "null" ]; then
+            if [[ $ddi == *.zst ]]; then
+                rm -f "${ddi%.zst}"
+            fi
+            continue
+        fi
+
+        mmd -D s -i "${ddi%.zst}@@${offset}" ::loader ::loader/addons || true
+        mcopy -o -i "${ddi%.zst}@@${offset}" "$DEST" "::loader/addons/$(basename "$DEST")"
+
+        if ((recompress)); then
+            zstd --force "${ddi%.zst}"
+            rm -f "${ddi%.zst}"
+        fi
+    done
+done < <(find hashes/addons -type f -name '*efi.sig' -printf '%P\n')
+rm -rf hashes/addons
+
+while read -r SIG; do
+    mkdir -p initrd/etc/ipe/
+
+    PATH=/usr/lib/systemd/:$PATH systemd-keyutil --help | grep -q 'pkcs7' || break
+    PATH=/usr/lib/systemd/:$PATH systemd-keyutil --certificate /usr/src/packages/SOURCES/_projectcert.crt --output "initrd/etc/ipe/$(basename "${SIG%.sig}.p7b")" --content "${SIG%.sig}" --signature "$SIG" pkcs7
+done < <(find hashes/ipe -type f -name '*.sig')
+rm -rf hashes/ipe
+
+if [ -d initrd ]; then
+    mkdir -p hashes/addons/
+    pushd initrd
+    # create cpio initrd and compress it with zstd
+    find . -type f | cpio -H newc -o >../ipe.addon.cpio
+    popd
+    zstd --force ipe.addon.cpio
+    ukify --initrd ipe.addon.cpio.zst --output "$OUTPUTDIR/ipe.addon.efi"  build
+    pesign --force -n sql:"$nss_db" -i "$OUTPUTDIR/ipe.addon.efi" -E hashes/addons/ipe.addon.efi
+    rm -f ipe.addon.cpio*
+fi
 
 # Sixth step: prepare EFI authvars for self-enrollment
 # as implemented by https://github.com/openSUSE/pesign-obs-integration/blob/master/pesign-repackage.spec.in#L162

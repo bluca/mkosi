@@ -8,6 +8,7 @@
 # - create minimal recipe for second stage that will continue from here
 
 set -e
+set -x
 
 declare -a UKIS
 mapfile -t UKIS < <(find "$OUTPUTDIR" -type f -name "*.efi" -printf '%P\n')
@@ -34,6 +35,11 @@ certutil -N -d sql:"$nss_db" --empty-password
 if [ -f /usr/src/packages/OTHER/hashes.cpio.rsasign ]; then
     pushd hashes
     cpio -idm </usr/src/packages/OTHER/hashes.cpio.rsasign
+    popd
+fi
+if [ -f "$OUTPUTDIR/hashes.cpio.rsasign" ]; then
+    pushd hashes
+    cpio -idm <"$OUTPUTDIR/hashes.cpio.rsasign"
     popd
 fi
 
