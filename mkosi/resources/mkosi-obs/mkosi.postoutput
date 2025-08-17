@@ -8,6 +8,7 @@
 # - create minimal recipe for second stage that will continue from here
 
 set -e
+set -x
 
 declare -a UKIS
 mapfile -t UKIS < <(find "$OUTPUTDIR" -type f -name "*.efi" -printf '%P\n')
@@ -78,7 +79,7 @@ for ddi in "${DDIS[@]}"; do
     [[ "$ddi" =~ -verity ]] && continue
 
     if [[ $ddi == *.zst ]]; then
-        unzstd "${ddi}"
+        unzstd --force "${ddi}"
     fi
     offset="$(systemd-repart --json=short "${ddi%.zst}" | jq -r '.[] | select(.type == "esp") | .offset')"
     if [ "$offset" = "null" ]; then
