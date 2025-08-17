@@ -8,6 +8,7 @@
 # - create minimal recipe for second stage that will continue from here
 
 set -e
+set -x
 
 declare -a UKIS
 mapfile -t UKIS < <(find "$OUTPUTDIR" -type f -name "*.efi" -printf '%P\n')
@@ -22,6 +23,8 @@ if ((${#UKIS[@]} == 0)) && ((${#KERNELS[@]} == 0)) && ((${#ROOTHASHES[@]} == 0))
     echo "No unsigned files found, exiting"
     exit 0
 fi
+
+cat "$MKOSI_CONFIG"
 
 nss_db="$PWD/nss-db"
 # certutil will fail if it's called twice
@@ -56,6 +59,7 @@ for f in "${KERNELS[@]}"; do
     pesign --force -n sql:"$nss_db" -i "${OUTPUTDIR}/${f}" -E "hashes/kernels/$f"
 done
 
+find $OUTPUTDIR
 repart_dir="$(jq -r '.RepartDirectories[-1]' "$MKOSI_CONFIG")"
 if [ -z "$repart_dir" ] || [ "$repart_dir" = "null" ]; then
     output="$(jq -r '.Output' "$MKOSI_CONFIG")"
