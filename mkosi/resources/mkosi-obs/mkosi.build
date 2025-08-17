@@ -9,6 +9,7 @@
 # - place artifacts from previous builds and signed UKI in output directory
 
 set -e
+set -x
 
 if [ ! -f /usr/src/packages/SOURCES/hashes.cpio.rsasign.sig ]; then
     exit 0

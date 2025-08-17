@@ -4419,8 +4419,8 @@ def create_argument_parser(chdir: bool = True) -> argparse.ArgumentParser:
     parser.add_argument(
         "--debug",
         help="Turn on debugging output",
-        action="store_true",
-        default=False,
+        action="store_false",
+        default=True,
     )
     parser.add_argument(
         "--debug-shell",
