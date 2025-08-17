@@ -8,6 +8,7 @@
 # - create minimal recipe for second stage that will continue from here
 
 set -e
+set -x
 
 declare -a UKIS
 mapfile -t UKIS < <(find "$OUTPUTDIR" -type f -name "*.efi" -printf '%P\n')
