@@ -14,6 +14,24 @@ ci:
         source_project: system:systemd
         source_package: mkosi
         target_project: system:systemd:ci
+    - link_package:
+        source_project: system:systemd
+        source_package: particleos-debian
+        target_project: system:systemd:ci
+    - link_package:
+        source_project: system:systemd
+        source_package: particleos-fedora
+        target_project: system:systemd:ci
+    - set_flags:
+        flags:
+          - type: publish
+            status: enable
+            project: system:systemd:ci
+          - type: build
+            status: disable
+            project: system:systemd:ci
+            architecture: aarch64
+            architecture: i586
   filters:
     event: pull_request
     branches:
