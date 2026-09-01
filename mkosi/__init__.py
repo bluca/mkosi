@@ -1830,6 +1830,8 @@ def build_uki(
             "--pcr-banks", "sha256",
             "--pcr-certificate", workdir(context.config.sign_expected_pcr_certificate),
         ]  # fmt: skip
+        if context.config.sign_initrd_pcrs == ConfigFeature.enabled:
+            arguments += ["--sign-initrd-pcrs"]
         options += [
             "--ro-bind", context.config.sign_expected_pcr_certificate, workdir(context.config.sign_expected_pcr_certificate),  # noqa: E501
         ]  # fmt: skip
@@ -2754,7 +2756,8 @@ def check_inputs(config: Config) -> None:
             hint="Run mkosi genkey to generate a key/certificate pair",
         )
 
-    if config.sign_initrd_pcrs == ConfigFeature.enabled and not want_signed_pcrs(config):
+    if config.sign_initrd_pcrs == ConfigFeature.enabled and not (want_signed_pcrs(config) or
+            ArtifactOutput.pcrs in config.split_artifacts):
         die("SignInitrdPCRs= is enabled but PCR signing is not enabled")
 
     if config.secure_boot_key_source != config.sign_expected_pcr_key_source:
