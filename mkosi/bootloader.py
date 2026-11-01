@@ -53,7 +53,10 @@ class KernelType(StrEnum):
                 pe = pefile.PE("{workdir(path)}", fast_load=True)
                 sections = {{s.Name.decode().strip("\\0") for s in pe.sections}}
 
-                if all(s in sections for s in (".linux", ".sdmagic", ".osrel")):
+                if (
+                    ".linux" in sections and
+                    any(s in sections for s in (".sdmagic", ".osrel", ".uname", ".sbat"))
+                ):
                     print("{KernelType.uki}")
                 elif (
                     ".sdmagic" in sections and
