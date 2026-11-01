@@ -682,24 +682,32 @@ def gen_kernel_images(context: Context) -> Iterator[tuple[str, Path]]:
         reverse=True,
     ):
         # Make sure we look for anything that remotely resembles vmlinuz, as the arch specific install
-        # scripts in the kernel source tree sometimes do weird stuff. But let's make sure we're not returning
-        # UKIs as the UKI on Fedora is named vmlinuz-virt.efi. Also look for uncompressed images (vmlinux) as
-        # some architectures ship those. Prefer vmlinuz if both are present.
+        # scripts in the kernel source tree sometimes do weird stuff. Also look for uncompressed images
+        # (vmlinux) as some architectures ship those. Prefer vmlinuz if both are present. Defer UKIs such as
+        # Fedora's vmlinuz-virt.efi until we have checked for plain kernels, then extract the kernel payload
+        # if only UKIs are available.
         if want_prebuilt_uki(context.config):
             for kimg in kver.glob("vmlinuz*.efi"):
                 if KernelType.identify(context.config, kimg) == KernelType.uki:
                     yield kver.name, kimg
                     break
         else:
-            for kimg in kver.glob("vmlinuz*"):
-                if KernelType.identify(context.config, kimg) != KernelType.uki:
-                    yield kver.name, kimg
-                    break
+            uki: Optional[Path] = None
+            for kimg in itertools.chain(kver.glob("vmlinuz*"), kver.glob("vmlinux*")):
+                if KernelType.identify(context.config, kimg) == KernelType.uki:
+                    uki = uki or kimg
+                    continue
+
+                yield kver.name, kimg
+                break
             else:
-                for kimg in kver.glob("vmlinux*"):
-                    if KernelType.identify(context.config, kimg) != KernelType.uki:
-                        yield kver.name, kimg
-                        break
+                if uki:
+                    kernels = context.workspace / "kernels"
+                    kernels.mkdir(exist_ok=True)
+                    yield (
+                        kver.name,
+                        extract_pe_section(context, uki, ".linux", kernels / f"vmlinuz-{kver.name}"),
+                    )
 
 
 def install_systemd_boot(context: Context) -> None:
