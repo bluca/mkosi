@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
+# Without an OBS signer there is no final signing worker.
+if [[ ! -f /usr/src/packages/SOURCES/_projectcert.crt ]]; then
+    exec cat
+fi
+
+# Keep the request per image: the generated follow-up recipe is shared by all subimages.
+# A locally signed checksum manifest needs all its inputs in the first stage.
+exec jq '
+    if (.Sign | not) and (.Format | IN("disk", "sysext", "confext", "portable")) and
+       (.CompressOutput | IN("none", "zstd")) and (.SplitArtifacts | index("partitions")) then
+        .SplitArtifacts |= (. - ["partitions", "repart-definitions"] + ["repart-definitions"]) |
+        .Environment.MKOSI_OBS_SPLIT_PARTITIONS = "1"
+    else . end
+'
